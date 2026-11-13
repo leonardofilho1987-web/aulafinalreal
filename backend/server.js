@@ -3,6 +3,9 @@ import cors from 'cors'
 import banco from './banco.js'
 import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
+import multer from 'multer'
+import path from 'path'
+
 
 const app = express()
 const PORTA = 3000
@@ -11,6 +14,16 @@ const SEGREDO = 'segredo-do-meu-site'
 app.use(cors())
 app.use(express.json())
 app.use('/uploads', express.static('uploads'))
+
+const upload = multer({
+    storage: multer.diskStorage({
+        destination: 'uploads',
+        filename: (req, arquivo, avisar) => {
+            avisar(null, Date.now() + path.extname(arquivo.originalname))
+        },
+    }),
+})
+
 
 //NOSSO PORTEIRO
 function exigirLogin(req, res, next) {
@@ -69,6 +82,9 @@ app.post('/login', (req, res) => {
 // GET -> GET PERFIL
 app.get('/perfil', exigirLogin, (req, res) => {
     const pessoa = buscarPessoa(req.usuarioId)
+    pessoa.post = banco
+        .prepare('SELECT id, imagem,legenda FROM posts WHERE usuario_id = ? ORDER BY id DESC')
+        .all(req.usuarioId)
     res.json(pessoa)
 })
 
@@ -85,6 +101,50 @@ app.get('/feed', exigirLogin, (req, res) => {
          `)
         .all()
     res.json(posts)
+})
+
+
+//POST -> POSTS
+app.post('/posts', exigirLogin, upload.single('imagem'), (req, res) => {
+    if (!req.file) {
+        return res.status(400).json({ erro: 'Você não enviou nenhum foto.' })
+    }
+
+    const legenda = req.body.legenda || ''
+
+
+    const resultado = banco
+        .prepare('INSERT INTO posts (usuario_id, imagem, legenda) VALUES (?, ?, ?)')
+        .run(req.usuarioId, req.file.filename, legenda)
+
+    const novo = {
+        id: resultado.lastInsertRowid,
+        imagem: req.file.filename,
+        legenda: legenda
+    }
+})
+
+// PATCH -> PERFIL
+app.patch('/perfil', exigirLogin, upload.single('foto'), (req, res) => {
+    const nome = (req.body.nome || '').trim()
+    const bio = (req.body.bio || '').trim()
+
+    if (nome === '') {
+        return res.status(400).json({ erro: 'O nome não pode ficar vazio.' })
+    }
+
+    banco
+        .prepare('UPDATE usuarios SET nome = ?, bio = ? WHERE id = ?')
+        .run(nome, bio, req.usuarioId)
+
+    if (req.file) {
+        banco
+            .prepare('UPDATE usuarios SET foto = ? WHERE id = ?')
+            .run(req.file.filename, req.usuarioId)
+    }
+
+    res.json(buscarPessoa(req.usuarioId))
+
 })
 
 
